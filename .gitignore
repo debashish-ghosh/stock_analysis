@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# uv lockfile
+uv.lock
+
+# Virtual environments
+.venv
+
+# IDE and editor files
+.vscode/
+.idea/
+.ruff*/
+
+# Jupyter notebooks
+*.ipynb
+
+# appdata
+config/
+
+# datastore
+store/

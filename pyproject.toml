@@ -1,0 +1,16 @@
+[project]
+name = "stock_analysis"
+version = "0.1.0"
+description = "Stock market data analysis tool"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "brotli>=1.2.0",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "requests>=2.32.5",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 2
