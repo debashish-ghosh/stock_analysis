@@ -9,6 +9,8 @@ from time import perf_counter
 import pandas as pd
 from requests import HTTPError
 
+from core import buy_sell, find_uptrend
+from data.client import reference_files
 from data.client.nse import CorporateAction, nse_client
 from data.provider import fsutils
 
@@ -213,6 +215,10 @@ def main():
 
   adjust_tickers(appconfig)
   save_config(appconfig)
+
+  reference_files.fetch()
+  find_uptrend.main()
+  buy_sell.main()
 
 
 if __name__ == "__main__":
