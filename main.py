@@ -108,10 +108,11 @@ def update_tickers(appconfig):
     return
 
   df = fsutils.build_ticker_data(from_date=last_modified + timedelta(days=1), to_date=last_synced)
+  symbols = df["Symbol"].unique()
+  print(f"{len(symbols)} symbols found")
   perf_end = perf_counter()
   print(f"Ticker data built ({perf_end - perf_start:.2f}s)")
   perf_start = perf_end
-  symbols = df["Symbol"].unique()
   for symbol in symbols:
     df_symbol = df[df["Symbol"] == symbol]
     df_file = fsutils.load_ticker(symbol)

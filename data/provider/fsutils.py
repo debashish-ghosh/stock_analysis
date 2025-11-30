@@ -53,7 +53,7 @@ def _bhavdata_to_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 def _sanitize(df: pd.DataFrame):
   df.loc[:, "Date"] = pd.to_datetime(df["Date"]).dt.date
   df = df[df["Date"].notna()]
-  df = df.drop_duplicates(ignore_index=True)
+  df = df.drop_duplicates(subset="Date", ignore_index=True)
   return df
 
 
@@ -73,7 +73,6 @@ def build_ticker_data(*, from_date: date, to_date: date):
 
   if not df.empty:
     df = _bhavdata_to_ohlcv(df)
-    df = _sanitize(df)
   return df
 
 
