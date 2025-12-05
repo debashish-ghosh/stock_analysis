@@ -1,0 +1,35 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils": {
+      "upgradePackages": true
+    },
+    "ghcr.io/va-h/devcontainers-features/uv": {
+      "shellautocompletion": true,
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/git-lfs": {}
+  },
+  "postCreateCommand": ".devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "dev.containers.copyGitConfig": true,
+        "workbench.editor.enablePreview": false,
+        "editor.formatOnType": true,
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff"
+      },
+      "extensions": [
+        "charliermarsh.ruff",
+        "mechatroner.rainbow-csv",
+        "ms-python.debugpy",
+        "ms-python.isort",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  }
+}

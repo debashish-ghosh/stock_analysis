@@ -14,3 +14,8 @@ dependencies = [
 [tool.ruff]
 line-length = 120
 indent-width = 2
+
+[dependency-groups]
+dev = [
+    "jupyterlab>=4.5.0",
+]
