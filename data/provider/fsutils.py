@@ -51,7 +51,7 @@ def _bhavdata_to_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _sanitize(df: pd.DataFrame):
-  df.loc[:, "Date"] = pd.to_datetime(df["Date"]).dt.date
+  df.loc[:, "Date"] = pd.to_datetime(df["Date"]).dt.date.astype(str)
   df = df[df["Date"].notna()]
   df = df.drop_duplicates(subset="Date", ignore_index=True)
   return df
