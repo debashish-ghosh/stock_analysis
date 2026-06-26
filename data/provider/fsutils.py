@@ -2,7 +2,7 @@ import re
 from datetime import date, timedelta
 from fractions import Fraction
 
-import pandas as pd
+import polars as pl
 
 from data.provider.config import Config
 
@@ -14,10 +14,10 @@ def store_bhavcopy(data: bytes, for_date: date):
     f.write(data)
 
 
-def store_corporate_action(data: pd.DataFrame, type: str):
+def store_corporate_action(data: pl.DataFrame, type: str):
   file = f"{type}_raw.csv"
   Config.CORP_ACTIONS_DIR.mkdir(parents=True, exist_ok=True)
-  data.to_csv(Config.CORP_ACTIONS_DIR / file, index=False)
+  data.write_csv(Config.CORP_ACTIONS_DIR / file)
 
 
 def bhavcopy_available(for_date: date) -> bool:
@@ -25,7 +25,7 @@ def bhavcopy_available(for_date: date) -> bool:
   return (Config.BHAVCOPY_DIR / bhavcopy_file).exists()
 
 
-def _bhavdata_to_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+def _bhavdata_to_ohlcv(df: pl.DataFrame) -> pl.DataFrame:
   """
   Convert bhavdata DataFrame to OHLCV format.
   """
@@ -40,61 +40,74 @@ def _bhavdata_to_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     "LAST_PRICE": "Last",
     "TTL_TRD_QNTY": "Volume",
   }
-  df.columns = df.columns.str.strip()
-  filt = df["SERIES"].isin([" EQ", " BE"])
-  df = df[filt]
-  df = df[bhav_column_map.keys()]
-  df = df.rename(columns=bhav_column_map)
-  df["Date"] = pd.to_datetime(df["Date"].str.lstrip(), format="%d-%b-%Y").dt.date
-  df["Series"] = df["Series"].str.lstrip()
-  return df
+
+  return (
+    df.rename({c: c.strip() for c in df.columns})
+    .filter(pl.col("SERIES").str.strip_chars().is_in(["EQ", "BE"]))
+    .select(bhav_column_map.keys())
+    .rename(bhav_column_map)
+    .with_columns(
+      [
+        pl.col("Date").str.strip_chars().str.to_date(format="%d-%b-%Y"),
+        pl.col("Series").str.strip_chars(),
+      ]
+    )
+  )
 
 
-def _sanitize(df: pd.DataFrame):
-  df.loc[:, "Date"] = pd.to_datetime(df["Date"]).dt.date.astype(str)
-  df = df[df["Date"].notna()]
-  df = df.drop_duplicates(subset="Date", ignore_index=True)
-  return df
+def _sanitize(df: pl.DataFrame):
+  date_col = pl.col("Date")
+  if df.schema["Date"] == pl.String:
+    df = df.with_columns(date_col.str.to_date())
+  return df.filter(date_col.is_not_null()).unique(subset="Date", maintain_order=True)
 
 
 def build_ticker_data(*, from_date: date, to_date: date):
-  current_date = from_date
-  df = pd.DataFrame()
+  df = pl.DataFrame()
 
+  current_date = from_date
   while current_date <= to_date:
     file = Config.BHAVCOPY_DIR / f"bhavdata_{current_date.strftime('%Y%m%d')}.csv"
     if file.exists():
       try:
-        file_df = pd.read_csv(file)
-      except UnicodeDecodeError:
-        file_df = pd.read_excel(file)
-      df = pd.concat([df, file_df], ignore_index=True)
+        schema = {
+          " OPEN_PRICE": pl.Float64,
+          " HIGH_PRICE": pl.Float64,
+          " LOW_PRICE": pl.Float64,
+          " LAST_PRICE": pl.Float64,
+          " CLOSE_PRICE": pl.Float64,
+          " TTL_TRD_QNTY": pl.Int64,
+        }
+        file_df = pl.read_csv(file, schema_overrides=schema)
+      except pl.exceptions.ComputeError:
+        file_df = pl.read_excel(file)
+
+      if not file_df.is_empty():
+        file_df = _bhavdata_to_ohlcv(file_df)
+      df = pl.concat([df, file_df])
     current_date += timedelta(1)
 
-  if not df.empty:
-    df = _bhavdata_to_ohlcv(df)
   return df
 
 
-def save_symbol_changes(df: pd.DataFrame):
+def save_symbol_changes(df: pl.DataFrame):
   file_manual = Config.CORP_ACTIONS_DIR / "symbol_change_manual.csv"
   if file_manual.exists():
-    df_manual = pd.read_csv(file_manual)
-    df = pd.concat([df, df_manual], ignore_index=True)
-  df["Date"] = pd.to_datetime(df["Date"], format="%d-%b-%Y").dt.date
-  df.sort_values(by="Date", inplace=True, ignore_index=True)
-  df.drop_duplicates(inplace=True, ignore_index=True)
+    df_manual = pl.read_csv(file_manual)
+    df = pl.concat([df, df_manual])
+  df = df.with_columns(pl.col("Date").str.to_date(format="%d-%b-%Y")).sort(by="Date").unique()
   Config.CORP_ACTIONS_DIR.mkdir(exist_ok=True, parents=True)
-  df.to_csv(Config.CORP_ACTIONS_DIR / "symbol_change.csv", index=False)
+  df.write_csv(Config.CORP_ACTIONS_DIR / "symbol_change.csv")
 
 
 def symbol_change_info(*, from_date: date, to_date: date) -> dict[str, list[str]]:
-  df = pd.read_csv(Config.CORP_ACTIONS_DIR / "symbol_change.csv")
-  df["Date"] = pd.to_datetime(df["Date"]).dt.date
-  df.set_index("Date", inplace=True)
-  df = df[from_date:to_date]
+  df = pl.read_csv(Config.CORP_ACTIONS_DIR / "symbol_change.csv")
+  date_col = pl.col("Date")
+  if df.schema["Date"] == pl.String:
+    df = df.with_columns(date_col.str.to_date())
+  df = df.filter((date_col >= from_date) & (date_col <= to_date))
   info = {}
-  for _, row in df.iterrows():
+  for row in df.iter_rows(named=True):
     old = row["Symbol-Old"]
     new = row["Symbol"]
     info[new] = [old]
@@ -104,15 +117,18 @@ def symbol_change_info(*, from_date: date, to_date: date) -> dict[str, list[str]
   return info
 
 
-def save_ticker(symbol: str, df: pd.DataFrame):
+def save_ticker(symbol: str, df: pl.DataFrame):
   df = _sanitize(df)
   Config.TICKER_DIR.mkdir(exist_ok=True, parents=True)
-  df.to_csv(Config.TICKER_DIR / f"{symbol}.csv", index=False)
+  df.write_csv(Config.TICKER_DIR / f"{symbol}.csv")
 
 
 def load_ticker(symbol: str):
   file = Config.TICKER_DIR / f"{symbol}.csv"
-  return pd.read_csv(file) if file.exists() else None
+  if not file.exists():
+    return None
+
+  return pl.read_csv(file, schema_overrides={"Date": pl.Date})
 
 
 def delete_ticker(symbol: str):
@@ -123,13 +139,14 @@ def get_ca_info(
   type: str, *, from_date: date | None = None, to_date: date | None = None
 ) -> dict[str, dict[date, Fraction]]:
   file = f"{type}_raw.csv"
-  ca = pd.read_csv(Config.CORP_ACTIONS_DIR / file)
+  ca = pl.read_csv(Config.CORP_ACTIONS_DIR / file)
   if from_date is not None:
-    ca = ca[ca["EX-DATE"] >= from_date.isoformat()]
+    ca = ca.filter(pl.col("EX-DATE") >= from_date.isoformat())
   if to_date is not None:
-    ca = ca[ca["EX-DATE"] <= to_date.isoformat()]
+    ca = ca.filter(pl.col("EX-DATE") <= to_date.isoformat())
   ca_info = {}
-  for _, row in ca.iterrows():
+  for row in ca.iter_rows(named=True):
     m = re.findall(r"\d+", row["PURPOSE"])
-    ca_info.setdefault(row["SYMBOL"], {})[row["EX-DATE"]] = Fraction(f"{m[0]}/{m[1]}")
+    dt = date.fromisoformat(row["EX-DATE"])
+    ca_info.setdefault(row["SYMBOL"], {})[dt] = Fraction(f"{m[0]}/{m[1]}")
   return ca_info

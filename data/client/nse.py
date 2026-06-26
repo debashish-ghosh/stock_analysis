@@ -3,7 +3,7 @@ from enum import Enum
 from io import BytesIO
 from time import perf_counter
 
-import pandas as pd
+import polars as pl
 import requests
 
 from data.client.config import Config
@@ -46,7 +46,7 @@ class nse_client:
     response.raise_for_status()
     return sess
 
-  def fetch_corporate_action(self, subject: CorporateAction, from_date: date, to_date: date) -> pd.DataFrame:
+  def fetch_corporate_action(self, subject: CorporateAction, from_date: date, to_date: date) -> pl.DataFrame:
     if self.session is None:
       perf_start = perf_counter()
       self.session = self._init_session()
@@ -71,8 +71,8 @@ class nse_client:
 
     response = self.session.get(Config.NSE_CORP_ACTIONS_URL, params=params, headers=headers)
     response.raise_for_status()
-    df = pd.read_csv(BytesIO(response.content))
-    df["EX-DATE"] = pd.to_datetime(df["EX-DATE"], format="%d-%b-%Y").dt.date
+    df = pl.read_csv(BytesIO(response.content))
+    df = df.with_columns(pl.col("EX-DATE").str.to_date(format="%d-%b-%Y"))
     perf_end = perf_counter()
     print(f"{subject.value} data downloaded from {from_date} to {to_date} ({perf_end - perf_start:.2}s)")
     return df
@@ -83,8 +83,8 @@ class nse_client:
     response.raise_for_status()
     cols = ["Name", "Symbol-Old", "Symbol", "Date"]
 
-    df = pd.read_csv(BytesIO(response.content), header=None, names=cols)
-    df.drop(columns="Name", inplace=True)
+    df = pl.read_csv(BytesIO(response.content), has_header=False, new_columns=cols)
+    df = df.drop("Name")
     perf_end = perf_counter()
     print(f"Symbol changes downloaded ({perf_end - perf_start:.2f}s)")
     return df

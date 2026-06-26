@@ -1,12 +1,10 @@
 from fractions import Fraction
 import json
 from datetime import date, timedelta
-from functools import partial
-from operator import is_not
 from pathlib import Path
 from time import perf_counter
 
-import pandas as pd
+import polars as pl
 from requests import HTTPError
 
 from data.client.nse import CorporateAction, nse_client
@@ -64,7 +62,7 @@ def sync_bhavdata(appconfig, client: nse_client):
       print(f"Bhavcopy downloaded for {current_date}")
       last_synced = current_date
     except HTTPError as e:
-      if e.response.status_code == 404:
+      if e.response is not None and e.response.status_code == 404:
         print(f"Bhavcopy not available for {current_date}")
         pass
     except Exception as e:
@@ -92,7 +90,7 @@ def sync_corp_actions(appconfig, client: nse_client):
     symbol_changes = client.fetch_symbol_changes()
     fsutils.save_symbol_changes(symbol_changes)
   except HTTPError as e:
-    if e.response.status_code == 404:
+    if e.response is not None and e.response.status_code == 404:
       print(f"Corporate action data not available from {from_date} to {today}")
       pass
   appconfig["corp_actions"]["last_synced"] = today.isoformat()
@@ -114,10 +112,10 @@ def update_tickers(appconfig):
   print(f"Ticker data built ({perf_end - perf_start:.2f}s)")
   perf_start = perf_end
   for symbol in symbols:
-    df_symbol = df[df["Symbol"] == symbol]
+    df_symbol = df.filter(pl.col("Symbol") == symbol)
     df_file = fsutils.load_ticker(symbol)
-    if not (df_file is None or df_file.empty):
-      df_symbol = pd.concat([df_file, df_symbol], ignore_index=True)
+    if not (df_file is None or df_file.is_empty()):
+      df_symbol = pl.concat([df_file, df_symbol])
     fsutils.save_ticker(symbol, df_symbol)
 
   appconfig["ticker"]["last_modified"] = last_synced.isoformat()
@@ -139,33 +137,49 @@ def combined_corporate_action():
   return ca_info
 
 
-def adjust_ticker_price(df: pd.DataFrame, symbol: str, info: dict[date, Fraction]):
+def adjust_ticker_price(df: pl.DataFrame, symbol: str, info: dict[date, Fraction]) -> tuple[pl.DataFrame, bool]:
   adjusted = False
   ADJ_SUFFIX = " (adj)"
   for ca_date, ratio in info.items():
-    row_indexer = df["Date"] < ca_date
-    if df[~row_indexer].empty:
+    before_ca = pl.col("Date") < ca_date
+    post_df = df.filter(~before_ca)
+
+    if post_df.is_empty():
       print(f"No data for {symbol} since {ca_date}")
       break
-    marker_idx = df[~row_indexer].iloc[0].name
+
     # check if not asjusted already
-    if not df.loc[marker_idx, "Symbol"].endswith(ADJ_SUFFIX):
-      col_indexer = ["Open", "High", "Low", "Close", "Last"]
-      df.loc[row_indexer, col_indexer] = round(df.loc[row_indexer, col_indexer] / float(ratio), 2)
-      df.loc[row_indexer, "Volume"] = (df.loc[row_indexer, "Volume"] * float(ratio)).astype(int)
-      # mark as adjusted
-      df.loc[marker_idx, "Symbol"] = df.loc[marker_idx, "Symbol"] + ADJ_SUFFIX
-      adjusted = True
-  return adjusted
+    if post_df["Symbol"][0].endswith(ADJ_SUFFIX):
+      continue
+
+    ratio_f = float(ratio)
+    price_cols = ["Open", "High", "Low", "Close", "Last"]
+    df = df.with_columns(
+      [
+        *[pl.when(before_ca).then((pl.col(c) / ratio_f).round(2)).otherwise(pl.col(c)).alias(c) for c in price_cols],
+        pl.when(before_ca)
+        .then((pl.col("Volume") * ratio_f).cast(pl.Int64))
+        .otherwise(pl.col("Volume"))
+        .alias("Volume"),
+        pl.when(pl.col("Date") == post_df["Date"][0])
+        .then(pl.col("Symbol") + ADJ_SUFFIX)
+        .otherwise(pl.col("Symbol"))
+        .alias("Symbol"),
+      ]
+    )
+
+    # mark as adjusted
+    adjusted = True
+  return df, adjusted
 
 
 def adjust_ticker_symbol(latest_symbol: str, old_symbols: list[str]):
   olds = [fsutils.load_ticker(s) for s in old_symbols]
   new = fsutils.load_ticker(latest_symbol)
-  result = list(filter(partial(is_not, None), olds + [new]))
+  result = [x for x in olds + [new] if x is not None]
   if result:
     # combine all previous symbols with the latest symbol and save
-    fsutils.save_ticker(latest_symbol, pd.concat(result, ignore_index=True))
+    fsutils.save_ticker(latest_symbol, pl.concat(result))
     # delete previous symbol files
     for symbol in old_symbols:
       fsutils.delete_ticker(symbol)
@@ -191,8 +205,14 @@ def adjust_tickers(appconfig):
   ca_info = combined_corporate_action()
   for symbol, info in ca_info.items():
     df = fsutils.load_ticker(symbol)
-    if adjust_ticker_price(df, symbol, info):
+
+    if df is None:
+      continue
+
+    df, adjusted = adjust_ticker_price(df, symbol, info)
+    if adjusted:
       fsutils.save_ticker(symbol, df)
+
   perf_end = perf_counter()
   print(f"Bonus and split adjustments done ({perf_end - perf_start:.2}s)")
 
