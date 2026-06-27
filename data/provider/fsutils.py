@@ -63,7 +63,7 @@ def _sanitize(df: pl.DataFrame):
 
 
 def build_ticker_data(*, from_date: date, to_date: date):
-  df = pl.DataFrame()
+  frames: list[pl.DataFrame] = []
 
   current_date = from_date
   while current_date <= to_date:
@@ -83,11 +83,10 @@ def build_ticker_data(*, from_date: date, to_date: date):
         file_df = pl.read_excel(file)
 
       if not file_df.is_empty():
-        file_df = _bhavdata_to_ohlcv(file_df)
-      df = pl.concat([df, file_df])
+        frames.append(_bhavdata_to_ohlcv(file_df))
     current_date += timedelta(1)
 
-  return df
+  return pl.concat(frames) if frames else pl.DataFrame()
 
 
 def save_symbol_changes(df: pl.DataFrame):

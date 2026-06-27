@@ -106,13 +106,15 @@ def update_tickers(appconfig):
     return
 
   df = fsutils.build_ticker_data(from_date=last_modified + timedelta(days=1), to_date=last_synced)
-  symbols = df["Symbol"].unique()
-  print(f"{len(symbols)} symbols found")
+  partitions: dict[str, pl.DataFrame] = {
+    part["Symbol"][0]: part for part in df.partition_by("Symbol", maintain_order=False)
+  }
+  print(f"{len(partitions)} symbols found")
   perf_end = perf_counter()
   print(f"Ticker data built ({perf_end - perf_start:.2f}s)")
   perf_start = perf_end
-  for symbol in symbols:
-    df_symbol = df.filter(pl.col("Symbol") == symbol)
+
+  for symbol, df_symbol in partitions.items():
     df_file = fsutils.load_ticker(symbol)
     if not (df_file is None or df_file.is_empty()):
       df_symbol = pl.concat([df_file, df_symbol])
