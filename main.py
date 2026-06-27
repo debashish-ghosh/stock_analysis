@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 import json
 from datetime import date, timedelta
@@ -40,33 +41,61 @@ def get_date(appconfig, *path):
     raise ValueError(f"Config path ({'.'.join(path)}) does not correspond to a date field")
 
 
+def _fetch_and_store_bhavcopy(client: nse_client, for_date: date) -> bool:
+  try:
+    data = client.fetch_bhavcopy(for_date)
+    fsutils.store_bhavcopy(data, for_date)
+    print(f"Bhavcopy downloaded for {for_date}.")
+    return True
+  except HTTPError as e:
+    if e.response is not None and e.response.status_code == 404:
+      print(f"Bhavcopy not available for {for_date}")
+      return True
+    print(f"HTTP error fetching bhavcopy for {for_date}: {e}")
+    return False
+  except Exception as e:
+    print(f"Error fetching bhavcopy for {for_date}: {e}")
+    return False
+
+
 def sync_bhavdata(appconfig, client: nse_client):
   perf_start = perf_counter()
   last_synced = get_date(appconfig, "bhavcopy", "last_synced")
 
-  current_date = last_synced
   today = date.today()
   if last_synced >= today:
     print("No new bhavcopy to sync")
     return
 
-  while current_date < today:
-    current_date += timedelta(days=1)
-    if fsutils.bhavcopy_available(current_date):
-      print(f"Bhavcopy for {current_date} is available. Skipping download")
-      last_synced = current_date
-      continue
-    try:
-      data = client.fetch_bhavcopy(current_date)
-      fsutils.store_bhavcopy(data, current_date)
-      print(f"Bhavcopy downloaded for {current_date}")
-      last_synced = current_date
-    except HTTPError as e:
-      if e.response is not None and e.response.status_code == 404:
-        print(f"Bhavcopy not available for {current_date}")
-        pass
-    except Exception as e:
-      print(f"Error fetching bhavcopy for {current_date}: {e}")
+  pending: list[date] = []
+  current = last_synced + timedelta(days=1)
+  while current < today:
+    if fsutils.bhavcopy_available(current):
+      print(f"Bhavcopy for {current} is available. Skipping download")
+    else:
+      pending.append(current)
+    current += timedelta(days=1)
+
+  if not pending:
+    print("No new bhavcopy to sync")
+    return
+
+  results: dict[date, bool] = {}
+  executor = ThreadPoolExecutor(max_workers=appconfig.get("max_workers", 5))
+  try:
+    futures = {executor.submit(_fetch_and_store_bhavcopy, client, d): d for d in pending}
+    for future in as_completed(futures):
+      d = futures[future]
+      results[d] = future.result()
+  except KeyboardInterrupt:
+    print("\nInterrupted — cancelling pending downloads...")
+    executor.shutdown(wait=True, cancel_futures=True)
+    raise
+
+  for d in sorted(pending):
+    if not results.get(d, False):
+      break
+    last_synced = d
 
   appconfig["bhavcopy"]["last_synced"] = last_synced.isoformat()
   perf_end = perf_counter()

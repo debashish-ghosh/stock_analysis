@@ -1,5 +1,6 @@
 {
-  "epoch": "2024-01-01",
+  "epoch": "2020-01-01",
+  "max_workers": 5,
   "bhavcopy": {
     "last_synced": null
   },
