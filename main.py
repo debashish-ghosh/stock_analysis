@@ -1,7 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from fractions import Fraction
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
+from fractions import Fraction
 from pathlib import Path
 from time import perf_counter
 
@@ -76,26 +76,28 @@ def sync_bhavdata(appconfig, client: nse_client):
       pending.append(current)
     current += timedelta(days=1)
 
-  if not pending:
+  if pending:
+    results: dict[date, bool] = {}
+    executor = ThreadPoolExecutor(max_workers=appconfig.get("max_workers", 5))
+    try:
+      futures = {executor.submit(_fetch_and_store_bhavcopy, client, d): d for d in pending}
+      for future in as_completed(futures):
+        d = futures[future]
+        results[d] = future.result()
+    except KeyboardInterrupt:
+      print("\nInterrupted — cancelling pending downloads...")
+      executor.shutdown(wait=True, cancel_futures=True)
+      raise
+
+    for d in sorted(pending):
+      if not results.get(d, False):
+        break
+      last_synced = d
+  elif current > last_synced:
+    last_synced = current
+  else:
     print("No new bhavcopy to sync")
     return
-
-  results: dict[date, bool] = {}
-  executor = ThreadPoolExecutor(max_workers=appconfig.get("max_workers", 5))
-  try:
-    futures = {executor.submit(_fetch_and_store_bhavcopy, client, d): d for d in pending}
-    for future in as_completed(futures):
-      d = futures[future]
-      results[d] = future.result()
-  except KeyboardInterrupt:
-    print("\nInterrupted — cancelling pending downloads...")
-    executor.shutdown(wait=True, cancel_futures=True)
-    raise
-
-  for d in sorted(pending):
-    if not results.get(d, False):
-      break
-    last_synced = d
 
   appconfig["bhavcopy"]["last_synced"] = last_synced.isoformat()
   perf_end = perf_counter()
@@ -121,7 +123,8 @@ def sync_corp_actions(appconfig, client: nse_client):
   except HTTPError as e:
     if e.response is not None and e.response.status_code == 404:
       print(f"Corporate action data not available from {from_date} to {today}")
-      pass
+    else:
+      raise
   appconfig["corp_actions"]["last_synced"] = today.isoformat()
 
 

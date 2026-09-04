@@ -8,4 +8,9 @@ class Config:
   NSE_CORP_ACTIONS_URL = f"{NSE_BASE_URL}/api/corporates-corporateActions"
   BHAVCOPY_URL_PREFIX: str = "https://nsearchives.nseindia.com/products/content"
   SYMBOL_CHANGE_URL: str = "https://nsearchives.nseindia.com/content/equities/symbolchange.csv"
-  USER_AGENT: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0"
+  USER_AGENT: str = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    " AppleWebKit/537.36 (KHTML, like Gecko)"
+    " Chrome/152.0.0.0 Safari/537.36"
+    " Edg/152.0.0.0"
+  )
