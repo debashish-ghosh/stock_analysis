@@ -1,14 +1,17 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu26.04",
   "features": {
     "ghcr.io/devcontainers/features/common-utils": {
+      "installZsh": false,
+      "installOhMyZsh": false,
+      "installOhMyZshConfig": false,
       "upgradePackages": true
     },
     "ghcr.io/va-h/devcontainers-features/uv": {
       "shellautocompletion": true,
       "version": "latest"
     },
-    "ghcr.io/devcontainers/features/git-lfs": {}
+    "ghcr.io/devcontainers/features/git": {}
   },
   "postCreateCommand": ".devcontainer/post-create.sh",
   "customizations": {
@@ -23,9 +26,6 @@
       "extensions": [
         "charliermarsh.ruff",
         "mechatroner.rainbow-csv",
-        "ms-python.debugpy",
-        "ms-python.isort",
-        "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-toolsai.jupyter",
         "tamasfe.even-better-toml"
